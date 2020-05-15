@@ -45,7 +45,7 @@ optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.5)
 
 
 def train(epoch):
-    ########3-fold training set만
+    #3-fold training set
     for i in range(0, 17):
         sess_str = 's' + str(i).zfill(3) + '_glasses'
         dataset_left = DiabetesDataset()
@@ -54,7 +54,7 @@ def train(epoch):
         dataset_right.__load__(sess_str, 'right_x','y_val')
         dataset_head = DiabetesDataset()
         dataset_head.__load__(sess_str, 'headPose_x', 'y_val')
-        #코어개수 확인 num_workers############### + batch size 결정
+        #Cores checking : num_workers, batch size
         train_loader_left = DataLoader(dataset=dataset_left,
                                   batch_size=32,
                                   shuffle=False,
