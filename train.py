@@ -9,25 +9,21 @@ import torch.optim as optim
 from torch import from_numpy
 from torch.autograd import Variable
 from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
-from network import GazeEstimationAbstractModel, GazeEstimationModelVGG
 
-# Training settings
-batch_size = 1024
-
-model = GazeEstimationModelVGG(GazeEstimationAbstractModel).cuda()
-
-optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.95))
-train_loss = nn.MSELoss()
-validation_loss = nn.MSELoss(reduction='sum')
-test_loss = nn.MSELoss(reduction='sum')
+train_loss = nn.MSELoss().cuda()
+validation_loss = nn.MSELoss(reduction='sum').cuda()
+test_loss = nn.MSELoss(reduction='sum').cuda()
 
 # 3-fold
 training_set = [[1, 2, 8, 10], [3, 4, 7, 9]]
 test_set = [5, 6, 11, 12, 13]
 validation_set = [14, 15, 16]
 
-for epoch in range(1, 10):
+
+def train(epoch, model, batch_size, num_workers):
+    optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.95))
     for s in training_set:
         for i in s:
             sess_str = 's' + str(i).zfill(3) + '_glasses'
@@ -37,12 +33,14 @@ for epoch in range(1, 10):
                                     from_numpy(np.load(os.path.join(root, 'right_x.npy'))).cuda(),
                                     from_numpy(np.load(os.path.join(root, 'headPose_x.npy'))).cuda(),
                                     from_numpy(np.load(os.path.join(root, 'y_val.npy'))).cuda())
-
+            sampler = DistributedSampler(dataset)
             # Cores checking : num_workers, batch size
             train_loader = DataLoader(dataset=dataset,
-                                      batch_size=32,
+                                      batch_size=batch_size,
                                       shuffle=False,
-                                      num_workers=2)
+                                      num_workers=num_workers,
+                                      pin_memory=True,
+                                      sampler=sampler)
 
             model.train()
             for batch_idx, (data_l, data_r, data_h, target) in enumerate(train_loader):
@@ -66,12 +64,14 @@ for epoch in range(1, 10):
                                     from_numpy(np.load(os.path.join(root, 'right_x.npy'))).cuda(),
                                     from_numpy(np.load(os.path.join(root, 'headPose_x.npy'))).cuda(),
                                     from_numpy(np.load(os.path.join(root, 'y_val.npy'))).cuda())
-
+            sampler = DistributedSampler(dataset)
             # Cores checking : num_workers, batch size
             validation_loader = DataLoader(dataset=dataset,
-                                           batch_size=32,
+                                           batch_size=batch_size,
                                            shuffle=False,
-                                           num_workers=2)
+                                           num_workers=num_workers,
+                                           pin_memory=True,
+                                           sampler=sampler)
 
             model.eval()
             loss = 0
@@ -85,6 +85,8 @@ for epoch in range(1, 10):
                 print('\nValidation set: Average loss: {:.4f}\n'.format(
                     loss))
 
+
+def test(model, batch_size, num_workers):
     # Test
     for i in test_set:
         sess_str = 's' + str(i).zfill(3) + '_glasses'
@@ -94,12 +96,14 @@ for epoch in range(1, 10):
                                 from_numpy(np.load(os.path.join(root, 'right_x.npy'))).cuda(),
                                 from_numpy(np.load(os.path.join(root, 'headPose_x.npy'))).cuda(),
                                 from_numpy(np.load(os.path.join(root, 'y_val.npy'))).cuda())
-
+        sampler = DistributedSampler(dataset)
         # Cores checking : num_workers, batch size
         test_loader = DataLoader(dataset=dataset,
-                                 batch_size=32,
+                                 batch_size=batch_size,
                                  shuffle=False,
-                                 num_workers=2)
+                                 num_workers=num_workers,
+                                 pin_memory=True,
+                                 sampler=sampler)
 
         model.eval()
         loss = 0
