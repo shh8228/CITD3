@@ -1,13 +1,20 @@
 import argparse
 
+import sys
+import time
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+import numpy as np
 import torch.distributed as dist
 import torch
-from apex.parallel import DistributedDataParallel as DDP
 from torchvision import models
 
 from train import test, train
 from network import GazeEstimationAbstractModel, GazeEstimationModelVGG
 
+sys.path.append('/home/dicetemp/CITD3/apex/apex')
+from apex.parallel import DistributedDataParallel as DDP
 
 def parse():
     model_names = sorted(name for name in models.__dict__
@@ -15,8 +22,6 @@ def parse():
                          and callable(models.__dict__[name]))
 
     parser = argparse.ArgumentParser(description='CITD3')
-    parser.add_argument('data', metavar='DIR',
-                        help='path to dataset')
     parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                         choices=model_names,
                         help='model architecture: ' +
@@ -64,9 +69,14 @@ def parse():
 
 def main():
     global args
+    
     args = parse()
     args.gpu = 0
     args.world_size = 1
+
+    x = np.arange(0, args.epochs)
+    y_v = np.arange(0, args.epochs).astype(np.float64)
+    y_t = np.arange(0, args.epochs).astype(np.float64)
 
     args.gpu = args.local_rank
     torch.cuda.set_device(args.gpu)
@@ -74,10 +84,38 @@ def main():
                                          init_method='env://')
     args.world_size = dist.get_world_size()
 
-    model = GazeEstimationModelVGG(GazeEstimationAbstractModel)
+    model = GazeEstimationModelVGG(num_out=2)
     model.cuda(args.gpu)
     model = DDP(model, delay_allreduce=True)
+    model = model.float()
 
+    start_time = time.strftime('%c', time.localtime(time.time()))
     for i in range(args.epochs):
-        model = train(i, model, args.batch_size, args.workers)
-        test(model, args.batch_size, args.workers)
+        model, validation_loss  = train(i, model, args.batch_size, args.workers, args.gpu)
+        test_loss = test(model, args.batch_size, args.workers, args.gpu)
+        y_v[i], y_t[i] = validation_loss, test_loss
+    
+    end_time = time.strftime('%c', time.localtime(time.time()))
+
+    torch.save(model.state_dict(), './model.pt')
+
+    np.savetxt('validation_loss_'+ str(args.gpu) + '.txt', y_v, fmt='%1.4f')
+    np.savetxt('test_loss_'+ str(args.gpu) + '.txt', y_t, fmt='%1.4f')
+    np.savetxt('epochs.txt', x, header='--start time : ' + start_time + '--', footer='--end time : ' + end_time + '--', fmt='%d')
+
+    plt.plot(x,y_t)
+    plt.xlabel('epochs')
+    plt.ylabel('loss')
+    plt.title('test loss')
+    plt.savefig('test_graph_'+ str(args.gpu) + '.png')
+    
+    plt.plot(x,y_v)
+    plt.xlabel('epochs')
+    plt.ylabel('loss')
+    plt.title('test and validation loss')
+    plt.savefig('graphs_'+ str(args.gpu) + '.png')
+   
+	
+
+if __name__=="__main__":
+    main()
