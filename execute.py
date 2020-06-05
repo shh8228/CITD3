@@ -13,8 +13,23 @@ from network import GazeEstimationModelVGG
 from collections import OrderedDict
 from math import pi
 from torchvision.transforms import transforms
+import pygame
+
+# Demo Settings
+bgm = ['The_Fur_Purrrade.mp3', 'The_High_Line.mp3', 'Divine_Life_Society.mp3']
+scene = ['city.jpg', 'hip-hop.jpg', 'mountains.png']
+ch=0
+vol=0.5
+onoff = 0
+black = np.zeros((1082, 1920, 3), np.uint8)
+pygame.init()
+pygame.mixer.music.load(bgm[ch])
+cv2.imshow('TV', black)
+list_lr = []
+list_ud = []
 
 
+# Not used (f : degree -> x,y,z)
 def gaze_xyz(y_pred):
     pred_x = -1 * np.cos(y_pred[0]) * np.sin(y_pred[1])
     pred_y = -1 * np.sin(y_pred[0])
@@ -26,10 +41,7 @@ def gaze_xyz(y_pred):
     return pred
 
 
-theta = 0.5573
-r = 1.5
-
-cap = cv2.VideoCapture(1)  # 0: default camera
+cap = cv2.VideoCapture(0)  # 0: default camera
 
 # initialize dlib's face detector (HOG-based) and then create
 # the facial landmark predictor
@@ -46,30 +58,40 @@ for k, v in state_dict.items():
 model.load_state_dict(new_state_dict)
 model.eval()
 
-r_counter = 0
-l_counter = 0
-u_counter = 0
-d_counter = 0
-out_list = []
-
 _transform = transforms.Compose([lambda x: cv2.resize(x, dsize=(224, 224), interpolation=cv2.INTER_CUBIC),
                                  transforms.ToTensor(),
                                  transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
 
 while cap.isOpened():
-    # 카메라 프레임 읽기
     success, frame = cap.read()
     if success:
-        # 프레임 출력
         # resize it, and convert it to grayscale
         image = imutils.resize(frame, width=500)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         # detect faces in the grayscale image
         rects = detector(gray, 1)
-        # loop over the face detections
-        for (k, rect) in enumerate(rects):
 
+        # not detected
+        if len(rects) == 0:
+            onoff += 1
+        # detected
+        if len(rects) != 0:
+            onoff = 0
+            imgch = cv2.imread(scene[ch], cv2.IMREAD_COLOR)
+            cv2.imshow('TV', imgch)
+            if not pygame.mixer.music.get_busy():
+                pygame.mixer.music.load(bgm[ch])
+                pygame.mixer.music.play(-1)
+                pygame.mixer.music.set_volume(vol)
+
+        # turn off
+        elif onoff >= 100:
+            onoff = 0
+            cv2.imshow('TV', black)
+            pygame.mixer.music.stop()
+
+        for (k, rect) in enumerate(rects):
             # determine the facial landmarks for the face region, then
             # convert the landmark (x, y)-coordinates to a NumPy array
             shape = predictor(gray, rect)
@@ -77,13 +99,11 @@ while cap.isOpened():
             eye_landmarks = [[], [], [], []]
             # loop over the face parts individually
             for (name, (i, j)) in [('right eye', (36, 42)), ('left eye', (42, 48))]:
-                # clone the original image so we can draw on it, then
-                # display the name of the face part on the image
-                clone = image.copy()
-                cv2.putText(clone, name, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7, (0, 0, 255), 2)
-                # loop over the subset of facial landmarks, drawing the
-                # specific face part
+                # clone = image.copy()
+                # cv2.putText(clone, name, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                #             0.7, (0, 0, 255), 2)
+
+                # loop over the subset of facial landmarks, drawing the specific face part
                 for (x, y) in shape[i:j]:
                     if name == 'right eye':
                         eye_landmarks[0].append(x)
@@ -92,24 +112,21 @@ while cap.isOpened():
                         eye_landmarks[2].append(x)
                         eye_landmarks[3].append(y)
 
-                    cv2.circle(clone, (x, y), 1, (0, 0, 255), -1)
-
+                #     cv2.circle(clone, (x, y), 1, (0, 0, 255), -1)
+                #
                 # cv2.imshow("Image", clone)
 
             # FACE ALIGNMENT & GET ANGLE, EYES CENTER
             output, angle, eyes_center = face_alignment(image=image, eye_landmarks=eye_landmarks)
             # cv2.imshow("output", output)
-            gray2 = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
 
             # EYE PATCH EXTRACTION
+            gray2 = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
             # detect faces in the grayscale image
             rect2 = detector(gray2, 1)
-
             if len(rect2) == 0:
                 break
-
             rect2 = rect2[0]
-
             shape2 = predictor(gray2, rect2)
             shape2 = face_utils.shape_to_np(shape2)
             roi = []
@@ -123,7 +140,6 @@ while cap.isOpened():
                 roi.append(temp[y - 17:y + 19, :])
 
             # show the face parts
-            # #####################################hist eq 여기도 하기 gray scale도?
             # cv2.imshow("Right", roi[0])
             # cv2.imshow("Left", roi[1])
 
@@ -141,9 +157,9 @@ while cap.isOpened():
                 shape2[54]  # Right mouth corner 54
             ], dtype="double"), output)
 
+            # FEED INTO NN
             roi[0] = _transform(roi[0])
             roi[1] = _transform(roi[1])
-
             with torch.no_grad():
                 roi[0] = roi[0].unsqueeze(0)
                 roi[1] = roi[1].unsqueeze(0)
@@ -153,53 +169,66 @@ while cap.isOpened():
                 gaze_out = model(roi[1].float(), roi[0].float(), headpose.float())
                 gaze_out = gaze_out*180/pi
                 out_list.append(gaze_out)
-                if
                 # print(gaze_out)
 
-            if l_counter > 0:
-                l_counter -= 1
-            if u_counter > 0:
-                u_counter -= 1
-            if d_counter > 0:
-                d_counter -= 1
-            if r_counter > 0:
-                r_counter -= 1
-
-            if gaze_out[0][0].item() < -10:
-                l_counter += 2
-            elif 0 > gaze_out[0][0].item() > -10:
-                l_counter += 1
-            if gaze_out[0][0].item() > 10:
-                r_counter += 2
-            elif 0 < gaze_out[0][0].item() < 10:
-                r_counter += 1
-            if gaze_out[0][1].item() > 15:
-                u_counter += 2
-            elif 0 < gaze_out[0][1].item() < 15:
-                u_counter += 1
-            if gaze_out[0][1].item() < -10:
-                d_counter += 2
-            elif 0 > gaze_out[0][1].item() > -10:
-                d_counter += 1
-
-            if l_counter > 5:
-                print('l')
-            if d_counter > 5:
-                print('d')
-            if r_counter > 5:
-                print('r')
-            if u_counter > 5:
-                print('u')
-
-            if l_counter > 5 or u_counter > 5 or d_counter > 5 or r_counter > 5:
-                l_counter = 0
-                d_counter = 0
-                u_counter = 0
-                r_counter = 0
+            # FOR DEMO
+            if len(rects) != 0:
+                list_ud.append(gaze_out[0][1])
+                list_lr.append(gaze_out[0][0])
+                if len(list_lr) > 5:
+                    del list_lr[0]
+                    del list_ud[0]
+                if len(list_lr) == 5:
+                    if abs(sum(list_lr)) > abs(sum(list_ud)):
+                        if sum(list_lr)/5 < -13:
+                            # left
+                            print('l')
+                            if vol<=0.3:
+                                vol = 0
+                            else:
+                                vol -= 0.3
+                            pygame.mixer.music.set_volume(vol)
+                            list_lr = []
+                            list_ud = []
+                        elif sum(list_lr)/5 > 15:
+                            # right
+                            print('r')
+                            if vol >= 0.7:
+                                vol = 1
+                            else:
+                                vol += 0.3
+                            pygame.mixer.music.set_volume(vol)
+                            list_lr = []
+                            list_ud = []
+                    else:
+                        if sum(list_ud)/5 < -15:
+                            # down
+                            print('d')
+                            if ch == 0:
+                                ch = 0
+                            else:
+                                ch -= 1
+                                pygame.mixer.music.load(bgm[ch])
+                                pygame.mixer.music.play(-1)
+                                pygame.mixer.music.set_volume(vol)
+                            list_lr=[]
+                            list_ud=[]
+                        elif sum(list_ud)/5 > 15:
+                            # up
+                            print('u')
+                            if ch == 2:
+                                ch = 2
+                            else:
+                                ch += 1
+                                pygame.mixer.music.load(bgm[ch])
+                                pygame.mixer.music.play(-1)
+                                pygame.mixer.music.set_volume(vol)
+                            list_lr = []
+                            list_ud = []
 
             # cv2.waitKey(0)
 
-    # ESC를 누르면 종료
+    # ESC to quit
     key = cv2.waitKey(1) & 0xFF
     if key == 27:
         break
